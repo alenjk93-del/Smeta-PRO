@@ -1,0 +1,25 @@
+# Ключи подписи и секреты — никогда в репозиторий
+*.keystore
+*.jks
+.ks-pass
+.env
+.env.*
+!.env.example
+
+# Результаты сборки
+*.apk
+*.aab
+build/
+out/
+gen/
+*.dex
+*.class
+
+# Временные и системные файлы
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+*~
+.idea/
+.vscode/
