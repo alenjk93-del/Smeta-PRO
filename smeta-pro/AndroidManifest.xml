@@ -1,4 +1,4 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.smeta.pro2" android:versionCode="86" android:versionName="1.11.23">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.smeta.pro2" android:versionCode="87" android:versionName="1.11.24">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
