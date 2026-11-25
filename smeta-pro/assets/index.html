@@ -800,7 +800,7 @@ const LEGACY_SEC_TITLES = DB.legacySectionTitles || {};
 
 function defState(){ return {ver: 2, mineLegacyHandled: false, estimates: [], templates: [], books: [],
   overrides: {}, tenderPrices: {}, custom: [], usage: {}, aptKinds: {},
-  settings: {markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: false, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}}; }
+  settings: {markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: true, autoUpdateDefaultOn: true, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}}; }
 
 function ikey(book, cat, folder, name){ return book + '\u0001' + cat + '\u0001' + folder + '\u0001' + name; }
 
@@ -829,13 +829,18 @@ function migrateState(s){
     d.usage = (s.usage && typeof s.usage === 'object') ? s.usage : {};
     d.aptKinds = (s.aptKinds && typeof s.aptKinds === 'object') ? s.aptKinds : {};
     d.mineLegacyHandled = !!s.mineLegacyHandled;
-    d.settings = Object.assign({markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: false, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}, s.settings || {});
+    d.settings = Object.assign({markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: true, autoUpdateDefaultOn: false, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}, s.settings || {});
+    /* v1.11.25: автообновление базы 62tender включено по умолчанию.
+       У старых установок в сохранённых настройках лежит false от
+       прежнего дефолта (а не осознанный выбор) — один раз включаем;
+       дальше решает тумблер в настройках. */
+    if (!d.settings.autoUpdateDefaultOn) { d.settings.autoUpdate = true; d.settings.autoUpdateDefaultOn = true; }
     return d;
   }
   /* ---- v1.0 → v2 ---- */
   const out = defState();
   out.estimates = Array.isArray(s.estimates) ? s.estimates : [];
-  out.settings = Object.assign({markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: false, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}, s.settings || {});
+  out.settings = Object.assign({markupPct: 0, defCoef: 1, executor: '', routeByCat: false, summaryDefault: true, projectsUnlocked: false, darkTheme: false, autoUpdate: true, autoUpdateDefaultOn: true, lastAutoCheck: 0, newsHiddenRun: '', primaryBookId: null}, s.settings || {});
   const ov = {};
   Object.keys(s.overrides || {}).forEach(k => {
     const p1 = k.indexOf('|'); if (p1 < 0) return;
@@ -8161,9 +8166,23 @@ function aptApplyToEstimate(t, est) {
      перезаписывается тендерным обновлением (skippedOwn).
    - Цена не изменилась — запись в архив не пишется.
    - Новая позиция сайта (раздел известен, позиции в каталоге нет) —
-     добавляется в этот раздел в папку «Новые позиции» (custom-запись с
-     флагом fromTender) и считается added.
+     добавляется в этот раздел в свою папку с сайта (заголовок-раздел
+     на странице; папка создаётся, если её ещё нет) как custom-запись
+     с флагом fromTender и считается added. Нет заголовка-папки —
+     папка «Новые позиции».
    - Книга «Мои расценки» обновлением не трогается вообще.
+   ИНВАРИАНТ (v1.11.25, явное требование пользователя): обновление
+   НИКОГДА не удаляет позиции и цены. Позиции нет на сайте в этом
+   запуске — она остаётся в каталоге как была. Раздел сайта пуст
+   («Раздел обновляется», нет таблицы или нет позиций) — раздел
+   пропускается молча, каталог и цены не меняются. Цены на сайте
+   пустые/0 — старые цены сохраняются. Никакой ответ сайта не может
+   удалить позицию или цену: применение только добавляет новые
+   позиции и обновляет цены существующих. (На сайте уже был период
+   больше полугода, когда позиции были пусты, — каталог в программе
+   обязан пережить это без потерь.)
+   v1.11.25: список разделов берётся с главной страницы сайта
+   (tenderDiscoverSections), при сбое — TENDER_SECTIONS ниже.
    Слои цены встроенной позиции (порядок разрешения):
      userOverride (state.overrides) > tenderPrice (state.tenderPrices) >
      встроенная цена каталога (db.js). Тендерные цены живут ОТДЕЛЬНО от
@@ -8172,8 +8191,11 @@ function aptApplyToEstimate(t, est) {
 
 /* Разделы тендера: название категории в книге «tender» -> страница сайта.
    URLs восстановлены из ~/workspace/smeta-db-raw/*.txt (SECTION-заголовки).
-   Раздел /prices/1/ (Демонтажные работы) на сайте пуст — категории в
-   каталоге нет, поэтому в список не входит: обновлять там нечего. */
+   v1.11.25: это ЗАПАСНОЙ список — основной берётся с главной страницы
+   сайта (tenderDiscoverSections). Пустые разделы сайта (Демонтажные
+   работы /prices/1/, Сверление отверстий, Штробление, Натяжные
+   потолки, Вентиляция) в запасной список не входят: обновлять там
+   нечего; в основном списке они пропускаются как пустые. */
 var TENDER_SECTIONS = [
   {cat: 'Общестроительные работы', url: 'https://www.62tender.ru/prices/2/'},
   {cat: 'Каменные работы', url: 'https://www.62tender.ru/prices/3/'},
@@ -8243,6 +8265,82 @@ function tenderRowsFromDoc(doc){
 function tenderParsePage(html){
   var doc = new DOMParser().parseFromString(html, 'text/html');
   return tenderRowsFromDoc(doc);
+}
+/* v1.6.1: битая кодировка — раздел уходит в failed целиком, а не в
+   каталог: ни одна позиция с U+FFFD в имени или единице не должна
+   попасть ни в применение, ни в архив. */
+function tenderHasGarbled(rows){
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].name.indexOf('\uFFFD') >= 0 ||
+        rows[i].unit.indexOf('\uFFFD') >= 0) return true;
+  }
+  return false;
+}
+/* v1.11.25: заголовок-раздел на странице сайта -> имя папки каталога.
+   Известная папка предпочитается (точное название из каталога); новый
+   заголовок принимается, если похож на название папки, а не на
+   служебную строку (дисклеймер, контакты) или примечание. null = не
+   папка: текущая папка не меняется. */
+function tenderFolderFromHeader(header, knownFolders){
+  var hn = tenderNormName(header);
+  for (var i = 0; i < knownFolders.length; i++) {
+    if (tenderNormName(knownFolders[i]) === hn) return knownFolders[i];
+  }
+  var h = String(header == null ? '' : header).trim();
+  if (h.length < 4 || h.length > 70) return null;
+  if (/^\d+\.\s/.test(h)) return null;
+  if (/^раздел (обновляется|наполняется)/i.test(h)) return null;
+  if (/оферт|базисом/i.test(h)) return null;
+  if (/http|vk\.ru/i.test(h)) return null;
+  if (/\+\d/.test(h)) return null;
+  if (h.indexOf('%') >= 0) return null;
+  if (/(^|\s)руб(\.|\s|$)/i.test(h)) return null; /* «руб.» как слово, не внутри «трубах» */
+  return h;
+}
+/* Есть ли категория во встроенной книге «tender». */
+function tenderCatInCatalog(catTitle){
+  var raw = null;
+  (DB.books || []).forEach(function (b) { if (b.id === 'tender') raw = b; });
+  if (!raw) return false;
+  var found = false;
+  (raw.cats || []).forEach(function (c) { if (c.title === catTitle) found = true; });
+  return found;
+}
+/* v1.11.25: список разделов с главной страницы сайта — ссылки
+   /prices/N/ и их названия. Название сверяется с категориями каталога
+   по нормализованному имени (берётся точное название каталога);
+   раздел, которого в каталоге ещё нет, идёт под своим названием с
+   сайта: его позиции появятся новой категорией, только если на сайте
+   есть позиции (пустые разделы пропускаются в runTenderUpdate, пустых
+   категорий не создаётся). Битые названия (U+FFFD) или любой сбой —
+   откат на захардкоженный TENDER_SECTIONS. */
+function tenderDiscoverSections(){
+  return tenderFetch('https://www.62tender.ru/prices/').then(function (html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var links = doc.querySelectorAll('a[href]');
+    var catByNorm = {};
+    var raw = null;
+    (DB.books || []).forEach(function (b) { if (b.id === 'tender') raw = b; });
+    if (raw) (raw.cats || []).forEach(function (c) {
+      catByNorm[tenderNormName(c.title)] = c.title;
+    });
+    var seen = {}, out = [];
+    for (var i = 0; i < links.length; i++) {
+      var href = links[i].getAttribute('href') || '';
+      var m = /\/prices\/(\d+)\/?$/.exec(href);
+      if (!m) continue;
+      var url = 'https://www.62tender.ru/prices/' + m[1] + '/';
+      if (seen[url]) continue;
+      var title = (links[i].textContent || '').replace(/\s+/g, ' ').trim() ||
+        (links[i].getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+      if (!title) continue;
+      if (title.indexOf('\uFFFD') >= 0) throw new Error('garbled-main');
+      seen[url] = true;
+      out.push({cat: catByNorm[tenderNormName(title)] || title, url: url});
+    }
+    if (!out.length) throw new Error('no-sections');
+    return out;
+  }).catch(function () { return TENDER_SECTIONS; });
 }
 
 /* ---------- архив: только изменения (ключ smeta_price_history_v1) ---------- */
@@ -8381,10 +8479,18 @@ function tenderKnownFolders(catTitle){
   var out = [TENDER_NEW_FOLDER];
   var raw = null;
   (DB.books || []).forEach(function (b) { if (b.id === 'tender') raw = b; });
-  if (!raw) return out;
-  (raw.cats || []).forEach(function (c) {
-    if (c.title !== catTitle) return;
-    (c.folders || []).forEach(function (f) { out.push(f.title); });
+  if (raw) {
+    (raw.cats || []).forEach(function (c) {
+      if (c.title !== catTitle) return;
+      (c.folders || []).forEach(function (f) { out.push(f.title); });
+    });
+  }
+  /* v1.11.25: папки, уже созданные прошлыми обновлениями (custom с
+     fromTender), — тоже известные: заголовок сайта должен попадать
+     в них по точному названию, а не плодить варианты. */
+  (state.custom || []).forEach(function (c) {
+    if (c.book === 'tender' && c.cat === catTitle && c.fromTender &&
+        out.indexOf(c.folder) < 0) out.push(c.folder);
   });
   return out;
 }
@@ -8397,8 +8503,6 @@ function tenderApplySection(secDef, rows, dateStr){
     unitMismatch: 0, changes: []};
   var pool = tenderPoolForSection(secDef.cat);
   var folders = tenderKnownFolders(secDef.cat);
-  var folderNorm = {};
-  folders.forEach(function (f) { folderNorm[tenderNormName(f)] = f; });
   var curFolder = null;
   /* v1.6.8: занятые в этом запуске записи пула (по индексу). Одна
      запись каталога — максимум одна строка сайта за запуск: иначе
@@ -8410,8 +8514,11 @@ function tenderApplySection(secDef, rows, dateStr){
        идёт с единицей — это не позиция, а пометка о дате прайса. */
     if (/^прайс/i.test(row.name)) return;
     if (!row.unit) {
-      var known = folderNorm[tenderNormName(row.name)];
-      if (known) curFolder = known;
+      /* v1.11.25: заголовок-раздел задаёт папку для следующих строк:
+         известная папка каталога или новая папка с сайта (служебные
+         строки и примечания папками не становятся). */
+      var f = tenderFolderFromHeader(row.name, folders);
+      if (f) curFolder = f;
       return;
     }
     var norm = tenderNormName(row.name);
@@ -8466,18 +8573,24 @@ function tenderApplySection(secDef, rows, dateStr){
       }
       if (dup) return;
       var price = tenderParsePrice(row.priceText);
+      /* v1.11.25: новая позиция — в свою папку с сайта (текущий
+         заголовок-раздел), а не в общую «Новые позиции»; папка
+         создаётся рендером каталога по custom-записи. Без заголовка —
+         прежняя «Новые позиции». */
+      var newFolder = curFolder || TENDER_NEW_FOLDER;
+      if (folders.indexOf(newFolder) < 0) folders.push(newFolder);
       var rec = {cid: uid(), book: 'tender', cat: secDef.cat,
-        folder: TENDER_NEW_FOLDER, n: row.name, u: row.unit, p: price,
+        folder: newFolder, n: row.name, u: row.unit, p: price,
         fromTender: true};
       state.custom.push(rec);
       var item = {n: row.name, u: row.unit, base: price, eff: price,
-        overridden: false, folder: TENDER_NEW_FOLDER,
-        key: ikey('tender', secDef.cat, TENDER_NEW_FOLDER, row.name),
-        skey: ikey('tender', secDef.cat, TENDER_NEW_FOLDER, row.name),
+        overridden: false, folder: newFolder,
+        key: ikey('tender', secDef.cat, newFolder, row.name),
+        skey: ikey('tender', secDef.cat, newFolder, row.name),
         custom: true, cid: rec.cid};
       pool.push(item);
       st.changes.push({date: dateStr, book: 'tender', cat: secDef.cat,
-        folder: TENDER_NEW_FOLDER, name: row.name, unit: row.unit,
+        folder: newFolder, name: row.name, unit: row.unit,
         old: null, new: price, added: true});
       st.added++;
       return;
@@ -8569,38 +8682,55 @@ function runTenderUpdate(opts){
   var allChanges = [];
   var failed = [];
   var fetchFailed = 0;
-  var chain = Promise.resolve();
-  TENDER_SECTIONS.forEach(function (sec) {
-    chain = chain.then(function () {
-      return tenderFetch(sec.url).then(function (html) {
-        var rows = tenderParsePage(html);
-        /* v1.6.1: битая кодировка — в failed целиком, а не в каталог:
-           ни одна позиция с U+FFFD в имени или единице не должна попасть
-           ни в применение, ни в архив, даже если декодер снова сломают. */
-        for (var gi = 0; gi < rows.length; gi++) {
-          if (rows[gi].name.indexOf('\uFFFD') >= 0 ||
-              rows[gi].unit.indexOf('\uFFFD') >= 0) throw new Error('garbled');
-        }
-        var st = tenderApplySection(sec, rows, dateStr);
-        totals.up += st.up; totals.down += st.down; totals.added += st.added;
-        totals.skippedNoPrice += st.skippedNoPrice;
-        totals.skippedOwn += st.skippedOwn;
-        totals.unitMismatch += st.unitMismatch;
-        allChanges = allChanges.concat(st.changes);
-      }).catch(function (e) {
-        if (e && (e.message === 'fetch-failed' || e.message === 'fetch-timeout' ||
-            e.message === 'no-bridge')) fetchFailed++;
-        failed.push(sec.cat);
+  var chain = tenderDiscoverSections().then(function (sections) {
+    var c = Promise.resolve();
+    sections.forEach(function (sec) {
+      c = c.then(function () {
+        return tenderFetch(sec.url).then(function (html) {
+          var rows;
+          try { rows = tenderParsePage(html); }
+          catch (e) {
+            /* Пустой раздел сайта: таблицы цен нет или строк нет.
+               Раздела нет в каталоге — норма («Раздел обновляется»),
+               пропуск молча. Раздел каталога без таблицы — сайт мог
+               переделать вёрстку: в failed, каталог не трогаем. */
+            if (e && e.message === 'no-rows') return;
+            if (e && e.message === 'no-table' && !tenderCatInCatalog(sec.cat)) return;
+            throw e;
+          }
+          /* Таблица есть, но позиций нет (только заголовки и служебные
+             строки) — раздел временно пуст: пропуск молча, каталог и
+             цены не меняются (инвариант v1.11.25: обновление ничего
+             не удаляет). */
+          var hasItems = false;
+          for (var hi = 0; hi < rows.length; hi++) {
+            if (rows[hi].unit && !/^прайс/i.test(rows[hi].name)) { hasItems = true; break; }
+          }
+          if (!hasItems) return;
+          /* v1.6.1: битая кодировка — в failed целиком, а не в каталог. */
+          if (tenderHasGarbled(rows)) throw new Error('garbled');
+          var st = tenderApplySection(sec, rows, dateStr);
+          totals.up += st.up; totals.down += st.down; totals.added += st.added;
+          totals.skippedNoPrice += st.skippedNoPrice;
+          totals.skippedOwn += st.skippedOwn;
+          totals.unitMismatch += st.unitMismatch;
+          allChanges = allChanges.concat(st.changes);
+        }).catch(function (e) {
+          if (e && (e.message === 'fetch-failed' || e.message === 'fetch-timeout' ||
+              e.message === 'no-bridge')) fetchFailed++;
+          failed.push(sec.cat);
+        });
       });
     });
+    return c.then(function () { return sections; });
   });
-  return chain.then(function () {
+  return chain.then(function (sections) {
     tenderUpdating = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Обновить базу'; }
     /* Все разделы не скачались из-за сети/моста: офлайн. Ничего не
        меняем, запуск в архив не пишем. */
-    if (failed.length === TENDER_SECTIONS.length &&
-        fetchFailed === TENDER_SECTIONS.length) {
+    if (failed.length === sections.length &&
+        fetchFailed === sections.length) {
       if (!opts.silent) {
         openModal('<h3>Нет соединения</h3>' +
           '<p class="muted">Цены не изменены: не удалось загрузить ни один ' +
