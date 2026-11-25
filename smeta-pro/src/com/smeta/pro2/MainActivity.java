@@ -1162,14 +1162,14 @@ public class MainActivity extends Activity {
             }}).start();
         }
 
-        /* ===== Обновления программы из папки на Яндекс Диске =====
-           Папка (публичная ссылка, APK кладёт пользователь сам):
-           https://disk.yandex.ru/d/dsfP2HffxqqGsw
-           Версия определяется по имени файла SmetaPRO-vX.Y.Z.apk.
+        /* ===== Обновления программы из релизов GitHub =====
+           Репозиторий: https://github.com/alenjk93-del/Smeta-PRO
+           Новые версии публикуются как GitHub Releases, APK прикладывается
+           к релизу файлом SmetaPRO-vX.Y.Z.apk; версия определяется по имени.
            Скачанный APK перед установкой проверяется: код версии
            должен быть новее установленного, а подпись — совпадать
            с подписью установленной программы. */
-        private static final String UPD_FOLDER_LINK = "https://disk.yandex.ru/d/dsfP2HffxqqGsw";
+        private static final String UPD_RELEASES_API = "https://api.github.com/repos/alenjk93-del/Smeta-PRO/releases?per_page=30";
         private static final String UPD_APK_NAME = "SmetaPRO-update.apk";
 
         @JavascriptInterface public String updVersion() {
@@ -1182,6 +1182,7 @@ public class MainActivity extends Activity {
         private String updHttpGet(String urlStr) throws Exception {
             HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
             c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android)");
+            c.setRequestProperty("Accept", "application/vnd.github+json");
             c.setConnectTimeout(30000); c.setReadTimeout(30000);
             int code = c.getResponseCode();
             if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
@@ -1213,32 +1214,33 @@ public class MainActivity extends Activity {
             new Thread(new Runnable() { @Override public void run() {
                 String out;
                 try {
-                    String pub = URLEncoder.encode(UPD_FOLDER_LINK, "UTF-8");
-                    String json = updHttpGet("https://cloud-api.yandex.net/v1/disk/public/resources?public_key=" + pub + "&limit=100&sort=-modified");
-                    JSONObject root = new JSONObject(json);
-                    JSONObject emb = root.optJSONObject("_embedded");
-                    JSONArray items = emb != null ? emb.optJSONArray("items") : null;
-                    String bestName = null, bestVer = null, bestPath = null; long bestSize = 0;
-                    if (items != null) {
-                        for (int i = 0; i < items.length(); i++) {
-                            JSONObject it = items.optJSONObject(i);
-                            if (it == null) continue;
-                            String name = it.optString("name", "");
-                            Matcher m = Pattern.compile("(?i)SmetaPRO-v([0-9]+(?:\\.[0-9]+)*)\\.apk").matcher(name);
+                    String json = updHttpGet(UPD_RELEASES_API);
+                    JSONArray rels = new JSONArray(json);
+                    Pattern pat = Pattern.compile("(?i)SmetaPRO-v([0-9]+(?:\\.[0-9]+)*)\\.apk");
+                    String bestName = null, bestVer = null, bestHref = null; long bestSize = 0;
+                    for (int i = 0; i < rels.length(); i++) {
+                        JSONObject rel = rels.optJSONObject(i);
+                        if (rel == null || rel.optBoolean("draft", false)) continue;
+                        JSONArray assets = rel.optJSONArray("assets");
+                        if (assets == null) continue;
+                        for (int j = 0; j < assets.length(); j++) {
+                            JSONObject a = assets.optJSONObject(j);
+                            if (a == null) continue;
+                            String name = a.optString("name", "");
+                            Matcher m = pat.matcher(name);
                             if (!m.find()) continue;
                             String ver = m.group(1);
                             if (bestVer == null || updCmpVer(ver, bestVer) > 0) {
-                                bestVer = ver; bestName = name; bestPath = it.optString("path", ""); bestSize = it.optLong("size", 0);
+                                bestVer = ver; bestName = name;
+                                bestHref = a.optString("browser_download_url", "");
+                                bestSize = a.optLong("size", 0);
                             }
                         }
                     }
-                    if (bestName == null) {
-                        out = "{\"ok\":false,\"error\":\"В папке нет файлов обновлений\"}";
+                    if (bestName == null || bestHref == null || bestHref.length() == 0) {
+                        out = "{\"ok\":false,\"error\":\"Нет опубликованных обновлений\"}";
                     } else {
-                        String dl = updHttpGet("https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=" + pub + "&path=" + URLEncoder.encode(bestPath, "UTF-8"));
-                        String href = new JSONObject(dl).optString("href", "");
-                        if (href.length() == 0) throw new Exception("нет ссылки для скачивания");
-                        out = "{\"ok\":true,\"name\":" + JSONObject.quote(bestName) + ",\"version\":" + JSONObject.quote(bestVer) + ",\"size\":" + bestSize + ",\"href\":" + JSONObject.quote(href) + "}";
+                        out = "{\"ok\":true,\"name\":" + JSONObject.quote(bestName) + ",\"version\":" + JSONObject.quote(bestVer) + ",\"size\":" + bestSize + ",\"href\":" + JSONObject.quote(bestHref) + "}";
                     }
                 } catch (Exception e) {
                     out = "{\"ok\":false,\"error\":" + JSONObject.quote("Не удалось проверить обновления: " + e.getMessage()) + "}";
@@ -1252,10 +1254,26 @@ public class MainActivity extends Activity {
                 File dir = new File(getCacheDir(), "shared"); dir.mkdirs();
                 File outFile = new File(dir, UPD_APK_NAME);
                 try {
-                    HttpURLConnection c = (HttpURLConnection) new URL(href).openConnection();
-                    c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android)");
-                    c.setConnectTimeout(30000); c.setReadTimeout(60000);
-                    int code = c.getResponseCode();
+                    // GitHub отдаёт APK через перенаправление на хранилище —
+                    // идём по цепочке вручную (до 6 переходов).
+                    String url = href;
+                    HttpURLConnection c = null;
+                    int code = 0;
+                    for (int hop = 0; hop < 6; hop++) {
+                        c = (HttpURLConnection) new URL(url).openConnection();
+                        c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android)");
+                        c.setConnectTimeout(30000); c.setReadTimeout(60000);
+                        c.setInstanceFollowRedirects(false);
+                        code = c.getResponseCode();
+                        if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                            String loc = c.getHeaderField("Location");
+                            c.disconnect();
+                            if (loc == null || loc.length() == 0) throw new Exception("HTTP " + code);
+                            url = new URL(new URL(url), loc).toString();
+                            continue;
+                        }
+                        break;
+                    }
                     if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
                     long total = c.getContentLengthLong();
                     java.io.InputStream in = c.getInputStream();
